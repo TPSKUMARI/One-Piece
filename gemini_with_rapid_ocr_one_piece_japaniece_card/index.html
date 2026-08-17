@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8"/>
+<title>One Piece Card Scanner</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: Arial, sans-serif; background: #1a1a1a; color: #eee; padding: 20px; }
+  h1 { text-align: center; margin-bottom: 20px; color: #f0c040; font-size: 20px; }
+
+  .controls { display: flex; gap: 10px; justify-content: center; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  input[type=file] { color: #eee; background: #2a2a2a; padding: 8px; border-radius: 6px; border: 1px solid #444; }
+  button { padding: 10px 24px; background: #c0392b; color: white; border: none; border-radius: 6px; font-size: 15px; cursor: pointer; }
+  button:hover:not(:disabled) { background: #e74c3c; }
+  button:disabled { background: #555; cursor: not-allowed; }
+
+  .status { text-align: center; padding: 8px; color: #aaa; min-height: 28px; font-size: 14px; }
+  .status.ok { color: #2ecc71; }
+  .status.error { color: #e74c3c; }
+  .status.warn  { color: #f39c12; }
+
+  /* ── Main comparison: input vs selected official ── */
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; max-width: 800px; margin: 0 auto 20px; }
+  @media(max-width:560px){ .panels { grid-template-columns: 1fr; } }
+
+  .panel { background: #222; border-radius: 8px; overflow: hidden; border: 1px solid #333; }
+  .panel-title { background: #2a2a2a; padding: 8px 14px; font-size: 12px; color: #888; text-transform: uppercase; letter-spacing: 0.05em; }
+  .panel.official .panel-title { color: #2ecc71; }
+  .panel img { width: 100%; aspect-ratio: 5/7; object-fit: contain; display: block; background: #111; padding: 8px; }
+  .placeholder { width: 100%; aspect-ratio: 5/7; display: flex; align-items: center; justify-content: center; background: #111; color: #444; font-size: 13px; text-align: center; padding: 10px; }
+
+  /* ── Variant picker ── */
+  .variant-section { max-width: 800px; margin: 0 auto 20px; display: none; }
+  .variant-label { font-size: 13px; color: #aaa; margin-bottom: 10px; }
+  .variant-label span { color: #f0c040; font-weight: bold; }
+  .variants { display: flex; gap: 10px; flex-wrap: wrap; }
+  .variant-btn {
+    border: 2px solid #444; border-radius: 8px; background: #222;
+    cursor: pointer; padding: 0; overflow: hidden; width: 120px;
+    transition: border-color 0.2s;
+  }
+  .variant-btn:hover { border-color: #888; }
+  .variant-btn.selected { border-color: #2ecc71; }
+  .variant-btn img { width: 100%; aspect-ratio: 5/7; object-fit: contain; background: #111; display: block; padding: 4px; }
+  .variant-btn .vname {
+    font-size: 11px; text-align: center; padding: 5px 4px;
+    color: #aaa; background: #2a2a2a; border-top: 1px solid #333;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .variant-btn.selected .vname { color: #2ecc71; }
+
+  /* ── Info table ── */
+  .info-box { max-width: 800px; margin: 0 auto; background: #222; border-radius: 8px; padding: 16px; border: 1px solid #333; }
+  .info-box h2 { font-size: 14px; color: #f0c040; margin-bottom: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 6px 10px; border-bottom: 1px solid #2a2a2a; }
+  td:first-child { color: #888; width: 130px; }
+  .saved-note { text-align:center; font-size:12px; color:#2ecc71; margin-top:6px; }
+  .alt-badge { display:inline-block; padding:2px 8px; background:rgba(155,89,182,0.2);
+    border:1px solid #9b59b6; border-radius:4px; color:#c39bd3; font-size:11px; }
+</style>
+</head>
+<body>
+<h1>&#9760; One Piece Card Scanner</h1>
+
+<div class="controls">
+  <input type="file" id="file" accept="image/*"/>
+  <button id="btn" disabled>Scan Card</button>
+</div>
+
+<div class="status" id="status">Select a card image to begin.</div>
+
+<!-- Main comparison panels -->
+<div class="panels">
+  <div class="panel" id="left">
+    <div class="panel-title">Your Input Photo</div>
+    <div class="placeholder" id="left-ph">No image selected</div>
+  </div>
+  <div class="panel official" id="right">
+    <div class="panel-title">Official Card Image</div>
+    <div class="placeholder" id="right-ph">Waiting for scan...</div>
+  </div>
+</div>
+
+<!-- Variant picker (shown only when multiple variants found) -->
+<div class="variant-section" id="variant-section">
+  <div class="variant-label">Found <span id="variant-count"></span> version(s) for this card &mdash; <span>click the one that matches your physical card:</span></div>
+  <div class="variants" id="variants"></div>
+</div>
+
+<!-- Info table -->
+<div class="saved-note" id="saved-note" style="display:none"></div>
+<div class="info-box" id="info" style="display:none">
+  <h2>Card Details</h2>
+  <table id="tbl"></table>
+</div>
+
+<script>
+const fileEl   = document.getElementById('file');
+const btn      = document.getElementById('btn');
+const status   = document.getElementById('status');
+const leftPnl  = document.getElementById('left');
+const rightPnl = document.getElementById('right');
+
+let currentVariants = [];
+let selectedIdx = 0;
+
+function setImage(panel, phId, src) {
+  const ph = document.getElementById(phId);
+  if (ph) ph.remove();
+  let img = panel.querySelector('img');
+  if (!img) { img = document.createElement('img'); panel.appendChild(img); }
+  img.src = src;
+}
+function setPlaceholder(panel, phId, text) {
+  let img = panel.querySelector('img');
+  if (img) img.remove();
+  let ph = document.getElementById(phId);
+  if (!ph) { ph = document.createElement('div'); ph.className = 'placeholder'; ph.id = phId; panel.appendChild(ph); }
+  ph.textContent = text;
+}
+
+// File selected
+fileEl.addEventListener('change', () => {
+  const file = fileEl.files[0];
+  if (!file) return;
+  btn.disabled = false;
+  status.textContent = 'Ready. Click Scan Card.';
+  status.className = 'status';
+  const r = new FileReader();
+  r.onload = e => setImage(leftPnl, 'left-ph', e.target.result);
+  r.readAsDataURL(file);
+});
+
+// Select a variant
+function selectVariant(idx) {
+  selectedIdx = idx;
+  const v = currentVariants[idx];
+  if (!v) return;
+
+  // Update button styles
+  document.querySelectorAll('.variant-btn').forEach((b, i) => {
+    b.classList.toggle('selected', i === idx);
+  });
+
+  // Show official image
+  if (v.image) {
+    setImage(rightPnl, 'right-ph', v.image);
+  } else {
+    setPlaceholder(rightPnl, 'right-ph', 'No image available');
+  }
+
+  // Update table
+  renderTable(v);
+}
+
+function renderTable(v) {
+  const rows = [
+    ['Card ID',  v.id      || '-'],
+    ['Variant',  v.label   || '-'],
+    ['Name',     v.name    || '-'],
+    ['Rarity',   v.rarity  || '-'],
+    ['Color',    v.color   || '-'],
+    ['Type',     v.type    || '-'],
+    ['Cost',     v.cost    ?? '-'],
+    ['Power',    v.power   ?? '-'],
+    ['Counter',  v.counter ?? '-'],
+    ['Effect',   v.effect  || '-'],
+  ];
+  document.getElementById('tbl').innerHTML = rows
+    .map(([k, v]) => '<tr><td>' + k + '</td><td>' + String(v) + '</td></tr>')
+    .join('');
+  document.getElementById('info').style.display = 'block';
+}
+
+// Scan
+btn.addEventListener('click', async () => {
+  const file = fileEl.files[0];
+  if (!file) return;
+
+  btn.disabled = true;
+  status.textContent = 'Sending to Gemini AI...';
+  status.className = 'status';
+  setPlaceholder(rightPnl, 'right-ph', 'Loading...');
+  document.getElementById('variant-section').style.display = 'none';
+  document.getElementById('info').style.display = 'none';
+  currentVariants = [];
+
+  const form = new FormData();
+  form.append('image', file);
+
+  try {
+    const resp = await fetch('/analyze', { method: 'POST', body: form });
+    const data = await resp.json();
+
+    if (!data.success) {
+      status.textContent = data.error;
+      status.className = 'status error';
+      setPlaceholder(rightPnl, 'right-ph', 'Error');
+      btn.disabled = false;
+      return;
+    }
+
+    const g = data.gemini || {};
+    currentVariants = data.variants || [];
+
+    // ── No DB match ───────────────────────────────────────
+    if (currentVariants.length === 0) {
+      status.textContent = 'Gemini read: ' + (g.card_number || '?') + ' — not found in database. Model: ' + data.model_used;
+      status.className = 'status warn';
+      setPlaceholder(rightPnl, 'right-ph', 'Not found in database');
+      btn.disabled = false;
+      return;
+    }
+
+    // ── Show variants ─────────────────────────────────────
+    // Always show variant picker (even if only 1 result, so user can see it)
+    const container = document.getElementById('variants');
+    container.innerHTML = '';
+    currentVariants.forEach((v, i) => {
+      const vbtn = document.createElement('div');
+      vbtn.className = 'variant-btn' + (i === data.best_idx ? ' selected' : '');
+      vbtn.innerHTML =
+        '<img src="' + (v.image || '') + '" alt="' + v.label + '"/>' +
+        '<div class="vname">' + v.label + '</div>';
+      vbtn.addEventListener('click', () => selectVariant(i));
+      container.appendChild(vbtn);
+    });
+    document.getElementById('variant-count').textContent = currentVariants.length;
+    document.getElementById('variant-section').style.display = 'block';
+
+    // Status
+    const cn = g.card_number || '?';
+    status.textContent = 'Gemini read: ' + cn + '  —  ' + currentVariants.length + ' version(s) found  —  model: ' + data.model_used;
+    status.className = 'status ok';
+
+    // Auto-select best match
+    selectVariant(data.best_idx || 0);
+
+  } catch (e) {
+    status.textContent = 'Network error: ' + e.message;
+    status.className = 'status error';
+  }
+
+  btn.disabled = false;
+});
+</script>
+</body>
+</html>

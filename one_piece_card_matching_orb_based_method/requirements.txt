@@ -1,0 +1,11 @@
+# Auto-generated requirements file (minimal, no pinned versions)
+# Detected third-party packages used in the project
+flask
+requests
+python-dotenv
+google-genai
+Pillow
+opencv-python
+numpy
+imagehash
+rapidocr-onnxruntime
